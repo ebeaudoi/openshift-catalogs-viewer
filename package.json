@@ -1,0 +1,22 @@
+{
+  "name": "operator-catalog-fetcher",
+  "version": "1.0.0",
+  "description": "Web application to fetch and list operators from Red Hat operator catalogs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "redhat",
+    "operators",
+    "catalog"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  }
+}
+
