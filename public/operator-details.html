@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operator Details - Red Hat Operator Catalog Fetcher</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="operator-details.css">
+</head>
+<body>
+    <div class="details-container">
+        <header class="details-header">
+            <div class="header-content">
+                <h1>Operator Details</h1>
+                <button id="back-button" class="back-button">← Back to Catalog</button>
+            </div>
+        </header>
+
+        <div class="details-layout">
+            <!-- Left Pane: Operator Info -->
+            <div class="left-pane">
+                <div class="operator-info-card">
+                    <h2 id="operator-name">Loading...</h2>
+                    <div class="info-section">
+                        <div class="info-item">
+                            <span class="info-label">Catalog:</span>
+                            <span id="operator-catalog" class="info-value">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Version:</span>
+                            <span id="operator-version" class="info-value">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Pane: Channel and Version Selection -->
+            <div class="right-pane">
+                <div class="channel-section">
+                    <h3>Channel Information</h3>
+                    
+                    <!-- Default Channel Display -->
+                    <div class="default-channel-display">
+                        <label>Default Channel:</label>
+                        <div id="default-channel" class="default-channel-value">-</div>
+                    </div>
+
+                    <!-- Channel Selector -->
+                    <div class="form-group">
+                        <label for="channel-select">Select Channel</label>
+                        <select id="channel-select" class="dropdown" disabled>
+                            <option value="">-- Select Channel --</option>
+                        </select>
+                    </div>
+
+                    <!-- Version List -->
+                    <div class="form-group">
+                        <label>Available Versions</label>
+                        <div id="version-list" class="version-list">
+                            <div class="version-list-placeholder">Select a channel to view versions</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="error-message" class="error-message" style="display: none;"></div>
+        <div id="loading-message" class="loading-message" style="display: none;">Loading operator details...</div>
+    </div>
+
+    <script src="operator-details.js"></script>
+</body>
+</html>
+

@@ -285,3 +285,32 @@ label {
     background: #666;
 }
 
+/* View Details Button */
+.view-details-button {
+    width: 100%;
+    padding: 14px 24px;
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.view-details-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(40, 167, 69, 0.3);
+}
+
+.view-details-button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.view-details-button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+    transform: none;
+}
+

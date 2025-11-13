@@ -8,9 +8,55 @@ const successMessage = document.getElementById('success-message');
 const logsContent = document.getElementById('logs-content');
 const clearLogsButton = document.getElementById('clear-logs-button');
 const toggleLogsButton = document.getElementById('toggle-logs-button');
+const viewDetailsButton = document.getElementById('view-details-button');
 
 // Event source for server-sent events
 let eventSource = null;
+
+// Cache for operators by catalog+version
+const operatorsCache = new Map();
+
+// Current cached catalog and version
+let cachedCatalog = null;
+let cachedVersion = null;
+
+// Load cache from sessionStorage on page load
+function loadCacheFromStorage() {
+    try {
+        const storedCache = sessionStorage.getItem('operatorsCache');
+        if (storedCache) {
+            const parsed = JSON.parse(storedCache);
+            for (const [key, value] of Object.entries(parsed)) {
+                operatorsCache.set(key, value);
+            }
+            console.log('Cache restored from sessionStorage:', operatorsCache.size, 'entries');
+        }
+        
+        const storedCatalog = sessionStorage.getItem('cachedCatalog');
+        const storedVersion = sessionStorage.getItem('cachedVersion');
+        if (storedCatalog && storedVersion) {
+            cachedCatalog = storedCatalog;
+            cachedVersion = storedVersion;
+        }
+    } catch (error) {
+        console.error('Error loading cache from storage:', error);
+    }
+}
+
+// Save cache to sessionStorage
+function saveCacheToStorage() {
+    try {
+        const cacheObj = {};
+        for (const [key, value] of operatorsCache.entries()) {
+            cacheObj[key] = value;
+        }
+        sessionStorage.setItem('operatorsCache', JSON.stringify(cacheObj));
+        if (cachedCatalog) sessionStorage.setItem('cachedCatalog', cachedCatalog);
+        if (cachedVersion) sessionStorage.setItem('cachedVersion', cachedVersion);
+    } catch (error) {
+        console.error('Error saving cache to storage:', error);
+    }
+}
 
 // Enable/disable fetch button based on selections
 function updateFetchButtonState() {
@@ -19,9 +65,69 @@ function updateFetchButtonState() {
     fetchButton.disabled = !(catalogSelected && versionSelected);
 }
 
+// Clear cache when catalog or version changes
+function clearCacheIfNeeded() {
+    const currentCatalog = catalogSelect.value;
+    const currentVersion = versionSelect.value;
+    
+    // Clear cache if catalog or version changed from what we have cached
+    if (cachedCatalog && cachedVersion) {
+        if (cachedCatalog !== currentCatalog || cachedVersion !== currentVersion) {
+            const oldCatalog = cachedCatalog;
+            const oldVersion = cachedVersion;
+            operatorsCache.clear();
+            cachedCatalog = null;
+            cachedVersion = null;
+            sessionStorage.removeItem('operatorsCache');
+            sessionStorage.removeItem('cachedCatalog');
+            sessionStorage.removeItem('cachedVersion');
+            addLogEntry(`Cache cleared: ${oldCatalog}:${oldVersion} → ${currentCatalog || 'none'}:${currentVersion || 'none'}`, 'info');
+            console.log('Cache cleared. Old:', oldCatalog, oldVersion, 'New:', currentCatalog, currentVersion);
+        }
+    }
+}
+
+// Get cache key for catalog+version
+function getCacheKey(catalog, version) {
+    return `${catalog}:${version}`;
+}
+
+// Check if operators are cached
+function getCachedOperators(catalog, version) {
+    const key = getCacheKey(catalog, version);
+    return operatorsCache.get(key);
+}
+
+// Store operators in cache
+function cacheOperators(catalog, version, operators) {
+    const key = getCacheKey(catalog, version);
+    // Make a copy of the array to avoid reference issues
+    operatorsCache.set(key, [...operators]);
+    cachedCatalog = catalog;
+    cachedVersion = version;
+    console.log('Cache stored:', { key, count: operators.length, cacheSize: operatorsCache.size });
+    saveCacheToStorage();
+}
+
 // Event listeners for dropdown changes
-catalogSelect.addEventListener('change', updateFetchButtonState);
-versionSelect.addEventListener('change', updateFetchButtonState);
+catalogSelect.addEventListener('change', () => {
+    clearCacheIfNeeded();
+    updateFetchButtonState();
+    saveStateToStorage();
+    if (catalogSelect.value) {
+        const catalogName = catalogSelect.options[catalogSelect.selectedIndex].text;
+        addLogEntry(`Catalog selected: ${catalogName}`, 'info');
+    }
+});
+
+versionSelect.addEventListener('change', () => {
+    clearCacheIfNeeded();
+    updateFetchButtonState();
+    saveStateToStorage();
+    if (versionSelect.value) {
+        addLogEntry(`Version selected: ${versionSelect.value}`, 'info');
+    }
+});
 
 // Hide messages
 function hideMessages() {
@@ -70,7 +176,7 @@ function populateOperatorDropdown(operators) {
     operatorSelect.disabled = false;
 }
 
-// Fetch operators from API
+// Fetch operators from API or cache
 async function fetchOperators() {
     const catalog = catalogSelect.value;
     const version = versionSelect.value;
@@ -82,12 +188,27 @@ async function fetchOperators() {
     }
 
     const catalogName = catalogSelect.options[catalogSelect.selectedIndex].text;
+
+    // Check cache first
+    const cached = getCachedOperators(catalog, version);
+    console.log('Cache check:', { catalog, version, cached: cached ? cached.length + ' operators' : 'not found', cacheSize: operatorsCache.size });
+    
+    if (cached && Array.isArray(cached) && cached.length > 0) {
+        addLogEntry(`Using cached operators for ${catalogName} ${version}`, 'info');
+        populateOperatorDropdown(cached);
+        showSuccess(`Loaded ${cached.length} operator(s) from cache`);
+        addLogEntry(`Loaded ${cached.length} operator(s) from cache`, 'success');
+        return;
+    }
+
+    // Not in cache, fetch from server
     addLogEntry(`Starting fetch operation: ${catalogName} ${version}`, 'info');
 
     hideMessages();
     setLoading(true);
     operatorSelect.disabled = true;
     operatorSelect.innerHTML = '<option value="">-- Select Operator --</option>';
+    viewDetailsButton.disabled = true;
 
     try {
         addLogEntry('Sending request to server...', 'info');
@@ -106,6 +227,10 @@ async function fetchOperators() {
         }
 
         if (data.operators && data.operators.length > 0) {
+            // Cache the operators
+            cacheOperators(catalog, version, data.operators);
+            console.log('Operators cached:', { catalog, version, count: data.operators.length, cacheSize: operatorsCache.size });
+            
             populateOperatorDropdown(data.operators);
             showSuccess(`Successfully fetched ${data.operators.length} operator(s)`);
             addLogEntry(`Successfully fetched ${data.operators.length} operator(s)`, 'success');
@@ -204,29 +329,87 @@ fetchButton.addEventListener('click', fetchOperators);
 clearLogsButton.addEventListener('click', clearLogs);
 toggleLogsButton.addEventListener('click', toggleLogs);
 
-// Log client-side events
-catalogSelect.addEventListener('change', () => {
-    updateFetchButtonState();
-    if (catalogSelect.value) {
-        const catalogName = catalogSelect.options[catalogSelect.selectedIndex].text;
-        addLogEntry(`Catalog selected: ${catalogName}`, 'info');
-    }
-});
-
-versionSelect.addEventListener('change', () => {
-    updateFetchButtonState();
-    if (versionSelect.value) {
-        addLogEntry(`Version selected: ${versionSelect.value}`, 'info');
-    }
-});
+// Note: Catalog and version change handlers are already defined above with cache clearing
 
 operatorSelect.addEventListener('change', () => {
+    saveStateToStorage();
     if (operatorSelect.value) {
         addLogEntry(`Operator selected: ${operatorSelect.value}`, 'info');
+        viewDetailsButton.disabled = false;
+    } else {
+        viewDetailsButton.disabled = true;
     }
 });
 
+// View details button handler
+viewDetailsButton.addEventListener('click', () => {
+    const operator = operatorSelect.value;
+    const catalog = catalogSelect.value;
+    const version = versionSelect.value;
+
+    if (operator && catalog && version) {
+        // Save current state before navigating
+        saveStateToStorage();
+        const url = `/operator-details.html?catalog=${encodeURIComponent(catalog)}&version=${encodeURIComponent(version)}&operator=${encodeURIComponent(operator)}`;
+        window.location.href = url;
+        addLogEntry(`Navigating to operator details: ${operator}`, 'info');
+    }
+});
+
+// Save current form state to sessionStorage
+function saveStateToStorage() {
+    try {
+        sessionStorage.setItem('selectedCatalog', catalogSelect.value);
+        sessionStorage.setItem('selectedVersion', versionSelect.value);
+        sessionStorage.setItem('selectedOperator', operatorSelect.value);
+        saveCacheToStorage();
+    } catch (error) {
+        console.error('Error saving state to storage:', error);
+    }
+}
+
+// Restore form state from sessionStorage
+function restoreStateFromStorage() {
+    try {
+        const savedCatalog = sessionStorage.getItem('selectedCatalog');
+        const savedVersion = sessionStorage.getItem('selectedVersion');
+        const savedOperator = sessionStorage.getItem('selectedOperator');
+        
+        if (savedCatalog) {
+            catalogSelect.value = savedCatalog;
+            addLogEntry('Catalog selection restored from previous session', 'info');
+        }
+        
+        if (savedVersion) {
+            versionSelect.value = savedVersion;
+            addLogEntry('Version selection restored from previous session', 'info');
+        }
+        
+        // If we have both catalog and version, try to restore operators
+        if (savedCatalog && savedVersion) {
+            const cached = getCachedOperators(savedCatalog, savedVersion);
+            if (cached && Array.isArray(cached) && cached.length > 0) {
+                populateOperatorDropdown(cached);
+                addLogEntry(`Restored ${cached.length} operator(s) from cache`, 'success');
+                
+                // Restore operator selection if it was saved
+                if (savedOperator) {
+                    operatorSelect.value = savedOperator;
+                    viewDetailsButton.disabled = false;
+                    addLogEntry(`Operator selection restored: ${savedOperator}`, 'info');
+                }
+            }
+        }
+        
+        updateFetchButtonState();
+    } catch (error) {
+        console.error('Error restoring state from storage:', error);
+    }
+}
+
 // Initialize
+loadCacheFromStorage();
+restoreStateFromStorage();
 updateFetchButtonState();
 connectToLogs();
 
