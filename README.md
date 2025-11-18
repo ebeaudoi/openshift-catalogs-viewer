@@ -1,5 +1,32 @@
 # Red Hat Operator Catalog Fetcher
 
+## Table of Contents
+
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Running the Application](#running-the-application)
+  - [Development Mode](#development-mode)
+  - [Container Deployment](#container-deployment)
+    - [Option 1: Run Directly on Host (Recommended)](#option-1-run-directly-on-host-recommended)
+    - [Option 2: Container Deployment (Self-Contained Podman)](#option-2-container-deployment-self-contained-podman)
+    - [Option 3: OpenShift Cluster Deployment](#option-3-openshift-cluster-deployment)
+- [Usage](#usage)
+- [API Endpoint](#api-endpoint)
+  - [POST /api/fetch-operators](#post-apifetch-operators)
+- [Available Catalogs](#available-catalogs)
+- [Available Versions](#available-versions)
+- [Project Structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
+  - [Podman not found](#podman-not-found)
+  - [Registry authentication errors](#registry-authentication-errors)
+  - [Permission errors](#permission-errors)
+  - [Container cleanup](#container-cleanup)
+- [License](#license)
+
+---
+
+A single-page web application that allows users to select a Red Hat operator catalog and version, fetch the corresponding container image, and list the operators available within that image.
 A single-page web application that allows users to select a Red Hat operator catalog and version, fetch the corresponding container image, and list the operators available within that image.
 
 ## Features
