@@ -1,9 +1,23 @@
 FROM node:18-alpine
 
-# Install podman (requires rootless podman setup)
-# Note: Podman in containers requires special privileges
-# This is a basic setup - you may need to adjust based on your container runtime
-RUN apk add --no-cache podman
+# Install podman and required dependencies
+# Podman in containers requires additional packages for storage and networking
+RUN apk add --no-cache \
+    podman \
+    shadow \
+    fuse-overlayfs \
+    slirp4netns \
+    crun \
+    iptables \
+    && rm -rf /var/cache/apk/*
+
+# Create necessary directories for Podman storage
+# Running as root with --privileged, so no need for separate podman user
+RUN mkdir -p /var/lib/containers/storage \
+    /var/lib/containers/storage/overlay \
+    /var/lib/containers/storage/volumes \
+    /run/podman \
+    /etc/containers
 
 # Create app directory
 WORKDIR /app
@@ -18,6 +32,10 @@ RUN npm install --production
 COPY server.js ./
 COPY public ./public
 
+# Create entrypoint script to initialize Podman
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Expose port
 EXPOSE 3000
 
@@ -25,6 +43,7 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start server
+# Use entrypoint to initialize Podman before starting the app
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]
 
