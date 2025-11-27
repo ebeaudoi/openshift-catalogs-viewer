@@ -441,6 +441,7 @@ const configVersionSelect = document.getElementById('config-version-select');
 const configFetchOperatorsButton = document.getElementById('config-fetch-operators-button');
 const configOperatorSelect = document.getElementById('config-operator-select');
 const configChannelSelect = document.getElementById('config-channel-select');
+const defaultChannelIndicator = document.getElementById('default-channel-indicator');
 const configVersionSelectOperator = document.getElementById('config-version-select-operator');
 const configAddOperatorButton = document.getElementById('config-add-operator-button');
 const configGenerateButton = document.getElementById('config-generate-button');
@@ -521,7 +522,20 @@ if (configFetchOperatorsButton) {
 if (configOperatorSelect) {
     configOperatorSelect.addEventListener('change', async () => {
         const operator = configOperatorSelect.value;
-        if (!operator || !currentConfigCatalog || !currentConfigVersion) return;
+        
+        // Clear default channel indicator if operator is cleared
+        if (!operator) {
+            if (defaultChannelIndicator) {
+                defaultChannelIndicator.style.display = 'none';
+            }
+            if (configChannelSelect) {
+                configChannelSelect.innerHTML = '<option value="">-- Select Channel --</option>';
+                configChannelSelect.disabled = true;
+            }
+            return;
+        }
+        
+        if (!currentConfigCatalog || !currentConfigVersion) return;
         
         try {
             const response = await fetch(`/api/operator-details?catalog=${encodeURIComponent(currentConfigCatalog)}&version=${encodeURIComponent(currentConfigVersion)}&operator=${encodeURIComponent(operator)}`);
@@ -536,12 +550,44 @@ if (configOperatorSelect) {
             data.channels.forEach(ch => {
                 const option = document.createElement('option');
                 option.value = ch.name;
-                option.textContent = ch.name;
+                // Mark default channel with "(Default)" label
+                if (data.defaultChannel && ch.name === data.defaultChannel) {
+                    option.textContent = `${ch.name} (Default)`;
+                } else {
+                    option.textContent = ch.name;
+                }
                 configChannelSelect.appendChild(option);
             });
             
             configChannelSelect.disabled = false;
             currentOperatorChannels = data.channels;
+            
+            // Pre-select default channel if available
+            if (data.defaultChannel) {
+                // Ensure the value is set
+                configChannelSelect.value = data.defaultChannel;
+                
+                // Display default channel indicator
+                if (defaultChannelIndicator) {
+                    defaultChannelIndicator.textContent = `Default channel: ${data.defaultChannel}`;
+                    defaultChannelIndicator.style.display = 'block';
+                }
+                
+                // Force a visual update by triggering a focus/blur
+                configChannelSelect.focus();
+                setTimeout(() => {
+                    configChannelSelect.blur();
+                }, 100);
+                
+                // Trigger change event to automatically populate versions
+                const changeEvent = new Event('change', { bubbles: true });
+                configChannelSelect.dispatchEvent(changeEvent);
+            } else {
+                // Hide indicator if no default channel
+                if (defaultChannelIndicator) {
+                    defaultChannelIndicator.style.display = 'none';
+                }
+            }
         } catch (error) {
             showError(error.message);
         }
