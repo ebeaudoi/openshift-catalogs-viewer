@@ -566,6 +566,287 @@ app.get('/api/operator-details', async (req, res) => {
   }
 });
 
+// Helper function to generate ImageSetConfiguration YAML
+function generateImageSetConfig(catalog, version, selections) {
+  const imageName = `registry.redhat.io/redhat/${catalog}:${version}`;
+  
+  const config = {
+    apiVersion: 'mirror.openshift.io/v2alpha1',
+    kind: 'ImageSetConfiguration',
+    mirror: {
+      operators: [
+        {
+          catalog: imageName,
+          packages: selections.map(sel => ({
+            name: sel.operator,
+            channels: [
+              {
+                name: sel.channel,
+                minVersion: sel.version
+              }
+            ]
+          }))
+        }
+      ]
+    }
+  };
+  
+  return yaml.dump(config);
+}
+
+// Helper function to parse ImageSetConfiguration
+function parseImageSetConfig(configContent) {
+  try {
+    const config = yaml.load(configContent);
+    
+    if (!config || config.kind !== 'ImageSetConfiguration') {
+      throw new Error('Invalid ImageSetConfiguration file');
+    }
+    
+    // Extract catalog and operators
+    const mirror = config.mirror || {};
+    const operators = mirror.operators || [];
+    
+    if (operators.length === 0) {
+      throw new Error('No operators found in configuration');
+    }
+    
+    // Get the first operator catalog (assuming single catalog per config)
+    const firstOperator = operators[0];
+    const catalogImage = firstOperator.catalog || '';
+    
+    // Extract catalog name and version from image
+    const catalogMatch = catalogImage.match(/redhat\/([^:]+):(.+)/);
+    const catalogName = catalogMatch ? catalogMatch[1] : '';
+    const catalogVersion = catalogMatch ? catalogMatch[2] : '';
+    
+    // Extract packages
+    const packages = [];
+    for (const op of operators) {
+      if (op.packages && Array.isArray(op.packages)) {
+        for (const pkg of op.packages) {
+          if (pkg.channels && Array.isArray(pkg.channels) && pkg.channels.length > 0) {
+            const channel = pkg.channels[0];
+            packages.push({
+              name: pkg.name,
+              channel: channel.name || '',
+              version: channel.minVersion || channel.maxVersion || ''
+            });
+          }
+        }
+      }
+    }
+    
+    return {
+      catalog: catalogName,
+      version: catalogVersion,
+      catalogImage: catalogImage,
+      packages: packages
+    };
+  } catch (error) {
+    throw new Error(`Failed to parse ImageSetConfiguration: ${error.message}`);
+  }
+}
+
+// API endpoint to generate ImageSetConfiguration
+app.post('/api/generate-imageset-config', async (req, res) => {
+  const { catalog, version, selections } = req.body;
+  
+  if (!catalog || !version || !selections || !Array.isArray(selections)) {
+    return res.status(400).json({
+      error: 'Missing required fields: catalog, version, and selections array are required'
+    });
+  }
+  
+  try {
+    const yamlContent = generateImageSetConfig(catalog, version, selections);
+    
+    res.json({
+      success: true,
+      yaml: yamlContent,
+      filename: `imageset-config-${Date.now()}.yaml`
+    });
+  } catch (error) {
+    console.error('Error generating ImageSetConfiguration:', error);
+    res.status(500).json({
+      error: 'Failed to generate ImageSetConfiguration',
+      message: error.message
+    });
+  }
+});
+
+// API endpoint to parse and analyze existing ImageSetConfiguration
+app.post('/api/parse-imageset-config', async (req, res) => {
+  const { configContent } = req.body;
+  
+  if (!configContent) {
+    return res.status(400).json({
+      error: 'Missing required field: configContent'
+    });
+  }
+  
+  try {
+    const parsed = parseImageSetConfig(configContent);
+    res.json({
+      success: true,
+      ...parsed
+    });
+  } catch (error) {
+    console.error('Error parsing ImageSetConfiguration:', error);
+    res.status(500).json({
+      error: 'Failed to parse ImageSetConfiguration',
+      message: error.message
+    });
+  }
+});
+
+// API endpoint to get latest versions for operators in a config
+app.post('/api/get-latest-versions', async (req, res) => {
+  const { catalog, version, packages } = req.body;
+  
+  if (!catalog || !version || !packages || !Array.isArray(packages)) {
+    return res.status(400).json({
+      error: 'Missing required fields: catalog, version, and packages array are required'
+    });
+  }
+  
+  try {
+    // Ensure catalog is cached
+    const cacheKey = `${catalog}-${version}`;
+    const cacheDir = path.join(CATALOG_CACHE_DIR, cacheKey);
+    const extractPath = path.join(cacheDir, 'configs');
+    
+    // Check if cached, if not, fetch it
+    try {
+      await fs.access(extractPath);
+    } catch {
+      // Need to fetch catalog
+      const imageName = `registry.redhat.io/redhat/${catalog}:${version}`;
+      broadcastLog(`Pulling catalog ${imageName} for version comparison...`, 'info');
+      
+      const pullResult = await executeCommand(`podman pull ${imageName}`);
+      if (!pullResult.success) {
+        throw new Error(`Failed to pull image: ${pullResult.stderr}`);
+      }
+      
+      const imageId = await getImageId(imageName);
+      const containerId = (await executeCommand(`podman create --name catalog-temp-${Date.now()} ${imageId}`)).stdout.trim();
+      
+      await fs.mkdir(cacheDir, { recursive: true });
+      await executeCommand(`podman cp ${containerId}:/configs ${cacheDir}/`);
+      await executeCommand(`podman rm ${containerId}`);
+    }
+    
+    // Get latest versions for each package
+    const versionInfo = [];
+    
+    for (const pkg of packages) {
+      try {
+        const operatorDir = path.join(extractPath, pkg.name);
+        await fs.access(operatorDir);
+        
+        const parsedObjects = await parseFBCDirectory(operatorDir);
+        const { channels } = extractChannelsAndVersions(parsedObjects);
+        
+        // Find the channel
+        const channel = channels.find(c => c.name === pkg.channel);
+        if (channel && channel.versions && channel.versions.length > 0) {
+          const latestVersion = channel.versions[0]; // Already sorted, first is latest
+          versionInfo.push({
+            name: pkg.name,
+            channel: pkg.channel,
+            currentVersion: pkg.version,
+            latestVersion: latestVersion,
+            hasUpdate: latestVersion !== pkg.version
+          });
+        } else {
+          versionInfo.push({
+            name: pkg.name,
+            channel: pkg.channel,
+            currentVersion: pkg.version,
+            latestVersion: pkg.version,
+            hasUpdate: false,
+            error: 'Channel not found or no versions available'
+          });
+        }
+      } catch (error) {
+        versionInfo.push({
+          name: pkg.name,
+          channel: pkg.channel,
+          currentVersion: pkg.version,
+          latestVersion: pkg.version,
+          hasUpdate: false,
+          error: error.message
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      versionInfo: versionInfo
+    });
+  } catch (error) {
+    console.error('Error getting latest versions:', error);
+    broadcastLog(`Error getting latest versions: ${error.message}`, 'error');
+    res.status(500).json({
+      error: 'Failed to get latest versions',
+      message: error.message
+    });
+  }
+});
+
+// API endpoint to update ImageSetConfiguration with new versions
+app.post('/api/update-imageset-config', async (req, res) => {
+  const { originalConfig, updates } = req.body;
+  
+  if (!originalConfig || !updates || !Array.isArray(updates)) {
+    return res.status(400).json({
+      error: 'Missing required fields: originalConfig and updates array are required'
+    });
+  }
+  
+  try {
+    const config = yaml.load(originalConfig);
+    
+    if (!config || config.kind !== 'ImageSetConfiguration') {
+      throw new Error('Invalid ImageSetConfiguration file');
+    }
+    
+    // Update versions in the config
+    const mirror = config.mirror || {};
+    const operators = mirror.operators || [];
+    
+    for (const op of operators) {
+      if (op.packages && Array.isArray(op.packages)) {
+        for (const pkg of op.packages) {
+          const update = updates.find(u => u.name === pkg.name && u.channel === pkg.channels[0]?.name);
+          if (update && pkg.channels && pkg.channels.length > 0) {
+            pkg.channels[0].minVersion = update.newVersion;
+            // Remove maxVersion if it exists
+            if (pkg.channels[0].maxVersion !== undefined) {
+              delete pkg.channels[0].maxVersion;
+            }
+          }
+        }
+      }
+    }
+    
+    const updatedYaml = yaml.dump(config);
+    
+    res.json({
+      success: true,
+      yaml: updatedYaml,
+      filename: `imageset-config-updated-${Date.now()}.yaml`
+    });
+  } catch (error) {
+    console.error('Error updating ImageSetConfiguration:', error);
+    res.status(500).json({
+      error: 'Failed to update ImageSetConfiguration',
+      message: error.message
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
