@@ -455,6 +455,7 @@ let selectedOperators = [];
 let currentConfigCatalog = null;
 let currentConfigVersion = null;
 let currentOperatorChannels = null;
+let currentOperatorDefaultChannel = null;
 
 // Update fetch button state
 function updateConfigFetchButtonState() {
@@ -561,6 +562,7 @@ if (configOperatorSelect) {
             
             configChannelSelect.disabled = false;
             currentOperatorChannels = data.channels;
+            currentOperatorDefaultChannel = data.defaultChannel || null;
             
             // Pre-select default channel if available
             if (data.defaultChannel) {
@@ -645,7 +647,19 @@ if (configAddOperatorButton) {
             return;
         }
         
-        selectedOperators.push({ operator, channel, version });
+        // Include default channel information if available and different from selected channel
+        const selection = {
+            operator,
+            channel,
+            version
+        };
+        
+        // Add defaultChannel if it exists and is different from selected channel
+        if (currentOperatorDefaultChannel && currentOperatorDefaultChannel !== channel) {
+            selection.defaultChannel = currentOperatorDefaultChannel;
+        }
+        
+        selectedOperators.push(selection);
         updateSelectedOperatorsDisplay();
         if (configGenerateButton) {
             configGenerateButton.disabled = selectedOperators.length === 0;
@@ -657,6 +671,10 @@ if (configAddOperatorButton) {
         configVersionSelectOperator.value = '';
         configChannelSelect.disabled = true;
         configVersionSelectOperator.disabled = true;
+        currentOperatorDefaultChannel = null;
+        if (defaultChannelIndicator) {
+            defaultChannelIndicator.style.display = 'none';
+        }
         updateConfigAddButtonState();
     });
 }

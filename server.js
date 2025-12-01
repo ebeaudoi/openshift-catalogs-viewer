@@ -577,15 +577,24 @@ function generateImageSetConfig(catalog, version, selections) {
       operators: [
         {
           catalog: imageName,
-          packages: selections.map(sel => ({
-            name: sel.operator,
-            channels: [
-              {
-                name: sel.channel,
-                minVersion: sel.version
-              }
-            ]
-          }))
+          packages: selections.map(sel => {
+            const packageConfig = {
+              name: sel.operator,
+              channels: [
+                {
+                  name: sel.channel,
+                  minVersion: sel.version
+                }
+              ]
+            };
+            
+            // Include defaultChannel if provided and different from selected channel
+            if (sel.defaultChannel && sel.defaultChannel !== sel.channel) {
+              packageConfig.defaultChannel = sel.defaultChannel;
+            }
+            
+            return packageConfig;
+          })
         }
       ]
     }
@@ -627,11 +636,18 @@ function parseImageSetConfig(configContent) {
         for (const pkg of op.packages) {
           if (pkg.channels && Array.isArray(pkg.channels) && pkg.channels.length > 0) {
             const channel = pkg.channels[0];
-            packages.push({
+            const packageInfo = {
               name: pkg.name,
               channel: channel.name || '',
               version: channel.minVersion || channel.maxVersion || ''
-            });
+            };
+            
+            // Extract defaultChannel if present
+            if (pkg.defaultChannel) {
+              packageInfo.defaultChannel = pkg.defaultChannel;
+            }
+            
+            packages.push(packageInfo);
           }
         }
       }

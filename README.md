@@ -26,14 +26,16 @@
 
 ---
 
-A single-page web application that allows users to select a Red Hat operator catalog and version, fetch the corresponding container image, and list the operators available within that image.
-A single-page web application that allows users to select a Red Hat operator catalog and version, fetch the corresponding container image, and list the operators available within that image.
+A single-page web application for managing Red Hat operator catalogs and creating oc-mirror v2 ImageSetConfiguration files. The application allows users to browse operator catalogs, view operator details (channels and versions), and generate or update ImageSetConfiguration files through an intuitive web interface.
 
 ## Features
 
 - **Catalog Selection**: Choose from Red Hat, Certified, Community, or Marketplace operator catalogs
 - **Version Selection**: Select from available versions (v4.15 through v4.20)
 - **Operator Listing**: Automatically fetch and display all available operators from the selected catalog
+- **Operator Details**: View channels, versions, and default channel information for any operator
+- **ImageSetConfiguration Creation**: Guided wizard to create new oc-mirror v2 ImageSetConfiguration files by selecting operators, channels, and versions
+- **ImageSetConfiguration Update**: Upload existing ImageSetConfiguration files and update operator versions with the latest available versions
 
 ## Prerequisites
 
