@@ -159,6 +159,164 @@ function setLoading(loading) {
     }
 }
 
+// Initialize searchable dropdown
+function initSearchableDropdown(inputId, selectId, dropdownId) {
+    const input = document.getElementById(inputId);
+    const select = document.getElementById(selectId);
+    const dropdown = document.getElementById(dropdownId);
+    
+    if (!input || !select || !dropdown) return;
+    
+    let allOptions = [];
+    let filteredOptions = [];
+    let selectedIndex = -1;
+    
+    // Populate options from select element
+    function updateOptions() {
+        allOptions = [];
+        Array.from(select.options).forEach((option, index) => {
+            if (option.value !== '') {
+                allOptions.push({
+                    value: option.value,
+                    text: option.textContent,
+                    index: index
+                });
+            }
+        });
+        filteredOptions = [...allOptions];
+        renderDropdown();
+    }
+    
+    // Render dropdown items
+    function renderDropdown() {
+        dropdown.innerHTML = '';
+        
+        if (filteredOptions.length === 0) {
+            const emptyItem = document.createElement('div');
+            emptyItem.className = 'searchable-select-dropdown-empty';
+            emptyItem.textContent = 'No operators found';
+            dropdown.appendChild(emptyItem);
+            return;
+        }
+        
+        filteredOptions.forEach((option, index) => {
+            const item = document.createElement('div');
+            item.className = 'searchable-select-dropdown-item';
+            if (index === selectedIndex) {
+                item.classList.add('highlighted');
+            }
+            item.textContent = option.text;
+            item.dataset.value = option.value;
+            item.dataset.index = index;
+            
+            item.addEventListener('click', () => {
+                select.value = option.value;
+                input.value = option.text;
+                dropdown.style.display = 'none';
+                selectedIndex = -1;
+                
+                // Trigger change event on select for compatibility
+                const changeEvent = new Event('change', { bubbles: true });
+                select.dispatchEvent(changeEvent);
+            });
+            
+            item.addEventListener('mouseenter', () => {
+                selectedIndex = index;
+                renderDropdown();
+            });
+            
+            dropdown.appendChild(item);
+        });
+    }
+    
+    // Filter options based on input
+    function filterOptions(searchTerm) {
+        const term = searchTerm.toLowerCase().trim();
+        if (term === '') {
+            filteredOptions = [...allOptions];
+        } else {
+            filteredOptions = allOptions.filter(option =>
+                option.text.toLowerCase().includes(term) ||
+                option.value.toLowerCase().includes(term)
+            );
+        }
+        selectedIndex = -1;
+        renderDropdown();
+    }
+    
+    // Input event handlers
+    input.addEventListener('input', (e) => {
+        const searchTerm = e.target.value;
+        filterOptions(searchTerm);
+        dropdown.style.display = 'block';
+    });
+    
+    input.addEventListener('focus', () => {
+        if (filteredOptions.length > 0) {
+            dropdown.style.display = 'block';
+        }
+    });
+    
+    input.addEventListener('blur', (e) => {
+        // Delay to allow click events on dropdown items
+        setTimeout(() => {
+            dropdown.style.display = 'none';
+        }, 200);
+    });
+    
+    // Keyboard navigation
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            selectedIndex = Math.min(selectedIndex + 1, filteredOptions.length - 1);
+            renderDropdown();
+            const items = dropdown.querySelectorAll('.searchable-select-dropdown-item');
+            if (items[selectedIndex]) {
+                items[selectedIndex].scrollIntoView({ block: 'nearest' });
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            selectedIndex = Math.max(selectedIndex - 1, -1);
+            renderDropdown();
+            const items = dropdown.querySelectorAll('.searchable-select-dropdown-item');
+            if (items[selectedIndex]) {
+                items[selectedIndex].scrollIntoView({ block: 'nearest' });
+            }
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (selectedIndex >= 0 && filteredOptions[selectedIndex]) {
+                const option = filteredOptions[selectedIndex];
+                select.value = option.value;
+                input.value = option.text;
+                dropdown.style.display = 'none';
+                selectedIndex = -1;
+                const changeEvent = new Event('change', { bubbles: true });
+                select.dispatchEvent(changeEvent);
+            }
+        } else if (e.key === 'Escape') {
+            dropdown.style.display = 'none';
+            selectedIndex = -1;
+        }
+    });
+    
+    // Sync with select changes
+    select.addEventListener('change', () => {
+        const selectedOption = select.options[select.selectedIndex];
+        if (selectedOption) {
+            input.value = selectedOption.textContent;
+        }
+    });
+    
+    // Initialize
+    updateOptions();
+    
+    // Watch for select changes (when options are added/removed)
+    const observer = new MutationObserver(updateOptions);
+    observer.observe(select, { childList: true, subtree: true });
+    
+    return { updateOptions };
+}
+
 // Populate operator dropdown
 function populateOperatorDropdown(operators) {
     // Clear existing options except the first one
@@ -174,6 +332,12 @@ function populateOperatorDropdown(operators) {
     
     // Enable the dropdown
     operatorSelect.disabled = false;
+    
+    // Enable searchable input
+    const operatorInput = document.getElementById('operator-select-input');
+    if (operatorInput) {
+        operatorInput.disabled = false;
+    }
 }
 
 // Fetch operators from API or cache
@@ -208,6 +372,11 @@ async function fetchOperators() {
     setLoading(true);
     operatorSelect.disabled = true;
     operatorSelect.innerHTML = '<option value="">-- Select Operator --</option>';
+    const operatorInput = document.getElementById('operator-select-input');
+    if (operatorInput) {
+        operatorInput.disabled = true;
+        operatorInput.value = '';
+    }
     viewDetailsButton.disabled = true;
 
     try {
@@ -465,7 +634,23 @@ function updateConfigFetchButtonState() {
 }
 
 if (configCatalogSelect && configVersionSelect) {
-    configCatalogSelect.addEventListener('change', updateConfigFetchButtonState);
+    configCatalogSelect.addEventListener('change', () => {
+        updateConfigFetchButtonState();
+        // Clear operator and channel selections when catalog changes
+        if (configOperatorSelect) configOperatorSelect.value = '';
+        const configOperatorInput = document.getElementById('config-operator-select-input');
+        if (configOperatorInput) {
+            configOperatorInput.value = '';
+            configOperatorInput.disabled = true;
+        }
+        if (configChannelSelect) configChannelSelect.value = '';
+        if (configVersionSelectOperator) configVersionSelectOperator.value = '';
+        if (configOperatorSelect) configOperatorSelect.disabled = true;
+        if (configChannelSelect) configChannelSelect.disabled = true;
+        if (configVersionSelectOperator) configVersionSelectOperator.disabled = true;
+        if (defaultChannelIndicator) defaultChannelIndicator.style.display = 'none';
+        currentOperatorDefaultChannel = null;
+    });
     configVersionSelect.addEventListener('change', updateConfigFetchButtonState);
 }
 
@@ -516,6 +701,13 @@ if (configFetchOperatorsButton) {
             });
             
             configOperatorSelect.disabled = false;
+            
+            // Enable searchable input
+            const configOperatorInput = document.getElementById('config-operator-select-input');
+            if (configOperatorInput) {
+                configOperatorInput.disabled = false;
+            }
+            
             showSuccess(`Fetched ${data.operators.length} operator(s)`);
         } catch (error) {
             showError(error.message);
@@ -683,6 +875,10 @@ if (configAddOperatorButton) {
         
         // Reset form for next selection
         configOperatorSelect.value = '';
+        const configOperatorInput = document.getElementById('config-operator-select-input');
+        if (configOperatorInput) {
+            configOperatorInput.value = '';
+        }
         configChannelSelect.value = '';
         configVersionSelectOperator.value = '';
         configChannelSelect.disabled = true;
@@ -1268,5 +1464,20 @@ if (configUpdateDownloadButton) {
         a.click();
         URL.revokeObjectURL(url);
     });
+}
+
+// Initialize searchable dropdowns when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        // Initialize searchable dropdown for "Fetch Operators" tab
+        initSearchableDropdown('operator-select-input', 'operator-select', 'operator-select-dropdown');
+        
+        // Initialize searchable dropdown for "Create ImageSetConfiguration" tab
+        initSearchableDropdown('config-operator-select-input', 'config-operator-select', 'config-operator-select-dropdown');
+    });
+} else {
+    // DOM is already loaded
+    initSearchableDropdown('operator-select-input', 'operator-select', 'operator-select-dropdown');
+    initSearchableDropdown('config-operator-select-input', 'config-operator-select', 'config-operator-select-dropdown');
 }
 
