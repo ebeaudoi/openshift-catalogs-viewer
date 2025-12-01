@@ -480,6 +480,13 @@ if (configFetchOperatorsButton) {
             return;
         }
         
+        // Clear selected operators list when fetching new catalog
+        selectedOperators = [];
+        updateSelectedOperatorsDisplay();
+        if (configGenerateButton) {
+            configGenerateButton.disabled = true;
+        }
+        
         // Disable button immediately
         configFetchOperatorsButton.disabled = true;
         
@@ -647,16 +654,25 @@ if (configAddOperatorButton) {
             return;
         }
         
-        // Include default channel information if available and different from selected channel
+        // Include default channel information if available
         const selection = {
             operator,
             channel,
             version
         };
         
-        // Add defaultChannel if it exists and is different from selected channel
-        if (currentOperatorDefaultChannel && currentOperatorDefaultChannel !== channel) {
+        // Always store defaultChannel if it exists (for use in defaultChannel parameter when not selected)
+        if (currentOperatorDefaultChannel) {
             selection.defaultChannel = currentOperatorDefaultChannel;
+            
+            // Store default channel version (not used when defaultChannel parameter is used, but kept for reference)
+            if (currentOperatorChannels) {
+                const defaultChannelObj = currentOperatorChannels.find(c => c.name === currentOperatorDefaultChannel);
+                if (defaultChannelObj && defaultChannelObj.versions && defaultChannelObj.versions.length > 0) {
+                    // Versions are sorted, first is latest
+                    selection.defaultChannelVersion = defaultChannelObj.versions[0];
+                }
+            }
         }
         
         selectedOperators.push(selection);
@@ -793,6 +809,8 @@ const configUpdateDownloadButton = document.getElementById('config-update-downlo
 let parsedConfig = null;
 let originalConfigContent = null;
 let versionUpdates = [];
+let channelReplacements = new Map(); // Track channel replacements: operator -> newChannel
+let defaultChannelAdditions = new Map(); // Track default channel additions: operator -> {channel, version}
 
 // Handle file upload
 if (configFileInput) {
@@ -846,6 +864,9 @@ if (configFileInput) {
                 configUpdateSection.style.display = 'block';
             }
             
+            // Initially disable button if channel replacements are required
+            checkChannelReplacementsComplete();
+            
         } catch (error) {
             if (configParseStatus) {
                 configParseStatus.textContent = `Error: ${error.message}`;
@@ -856,11 +877,42 @@ if (configFileInput) {
     });
 }
 
+// Store versionInfo globally for channel replacement handler
+let currentVersionInfo = [];
+
+// Function to check if all required channel replacements are complete
+function checkChannelReplacementsComplete() {
+    if (!currentVersionInfo || currentVersionInfo.length === 0) {
+        if (configUpdateButton) {
+            configUpdateButton.disabled = false;
+        }
+        return;
+    }
+    
+    // Find all operators that require channel replacement
+    const operatorsRequiringReplacement = currentVersionInfo
+        .filter(info => info.channelNotFound && !info.operatorNotFound)
+        .map(info => info.name);
+    
+    // Check if all have been replaced
+    const allReplaced = operatorsRequiringReplacement.every(operator => 
+        channelReplacements.has(operator)
+    );
+    
+    // Enable button only if all replacements are complete
+    if (configUpdateButton) {
+        configUpdateButton.disabled = !allReplaced;
+    }
+}
+
 function displayVersionComparison(versionInfo) {
     if (!operatorVersionsList) return;
     
     operatorVersionsList.innerHTML = '';
     versionUpdates = [];
+    channelReplacements.clear(); // Reset channel replacements
+    defaultChannelAdditions.clear(); // Reset default channel additions
+    currentVersionInfo = versionInfo; // Store for channel replacement handler
     
     versionInfo.forEach(info => {
         const div = document.createElement('div');
@@ -868,16 +920,85 @@ function displayVersionComparison(versionInfo) {
         
         const hasUpdate = info.hasUpdate && !info.error;
         const updateClass = hasUpdate ? 'has-update' : '';
+        const errorClass = info.error ? 'has-error' : '';
+        
+        // Check if current channel is not the default channel
+        const isNonDefaultChannel = info.defaultChannel && info.channel !== info.defaultChannel;
+        
+        // Build default channel display
+        const defaultChannelDisplay = info.defaultChannel 
+            ? `<div class="default-channel-display">Default channel: <strong>${info.defaultChannel}</strong></div>` 
+            : '';
+        
+        // Build error message
+        let errorDisplay = '';
+        if (info.operatorNotFound) {
+            errorDisplay = '<div class="error-message">Operator not found.</div>';
+        } else if (info.channelNotFound) {
+            errorDisplay = `
+                <div class="error-message">Channel "${info.channel}" not found.</div>
+                <div class="channel-replacement-section">
+                    <label>Select replacement channel:</label>
+                    <select class="channel-replacement-select" data-operator="${info.name}" data-original-channel="${info.channel}">
+                        <option value="">-- Select Channel --</option>
+                        ${info.availableChannels ? info.availableChannels.map(ch => 
+                            `<option value="${ch}">${ch}${ch === info.defaultChannel ? ' (Default)' : ''}</option>`
+                        ).join('') : ''}
+                    </select>
+                </div>
+            `;
+        } else if (info.error) {
+            errorDisplay = `<div class="error-message">${info.error}</div>`;
+        }
+        
+        // Build default channel addition option (Fix 2)
+        let defaultChannelOption = '';
+        if (info.defaultChannel && !info.operatorNotFound && !info.channelNotFound) {
+            // Use defaultChannelLatestVersion from server response
+            const defaultLatestVersion = info.defaultChannelLatestVersion || info.latestVersion;
+            
+            if (isNonDefaultChannel) {
+                // Fix 2: Optional checkbox to add/update default channel (only shown when current channel ≠ default channel)
+                // Default to checked (Fix 1: automatically add default channel)
+                if (defaultLatestVersion) {
+                    // Automatically add default channel when non-default is used (Fix 1 - checked by default)
+                    defaultChannelAdditions.set(info.name, {
+                        channel: info.defaultChannel,
+                        version: defaultLatestVersion
+                    });
+                    
+                    defaultChannelOption = `
+                        <div class="default-channel-option">
+                            <label>
+                                <input type="checkbox" class="add-default-channel-checkbox" 
+                                       data-operator="${info.name}" 
+                                       data-channel="${info.defaultChannel}" 
+                                       data-version="${defaultLatestVersion}"
+                                       checked>
+                                Add default channel "${info.defaultChannel}" to channels array with latest version (${defaultLatestVersion})
+                            </label>
+                            <div class="default-channel-info" style="margin-top: 5px; font-size: 0.85rem; color: #666;">
+                                If unchecked, defaultChannel parameter will be used instead
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+            // Fix 2 constraint: Option is only shown when current channel ≠ default channel (handled in isNonDefaultChannel case above)
+            // If current channel IS the default channel, no option is shown (already using default)
+        }
         
         div.innerHTML = `
-            <div class="operator-version-info ${updateClass}">
+            <div class="operator-version-info ${updateClass} ${errorClass}">
                 <div class="operator-name"><strong>${info.name}</strong></div>
+                ${defaultChannelDisplay}
                 <div class="channel-info">Channel: ${info.channel}</div>
                 <div class="version-info">
                     <span class="current-version">Current: ${info.currentVersion}</span>
-                    <span class="latest-version">Latest: ${info.latestVersion}</span>
+                    ${!info.operatorNotFound && !info.channelNotFound ? `<span class="latest-version">Latest: ${info.latestVersion}</span>` : ''}
                 </div>
-                ${info.error ? `<div class="error-message">${info.error}</div>` : ''}
+                ${errorDisplay}
+                ${defaultChannelOption}
             </div>
             <div class="version-action">
                 ${hasUpdate ? `
@@ -885,7 +1006,7 @@ function displayVersionComparison(versionInfo) {
                         <input type="checkbox" class="update-checkbox" data-name="${info.name}" data-channel="${info.channel}" data-version="${info.latestVersion}">
                         Update to ${info.latestVersion}
                     </label>
-                ` : '<span class="no-update">No update available</span>'}
+                ` : info.operatorNotFound || info.channelNotFound ? '<span class="no-update">-</span>' : '<span class="no-update">No update available</span>'}
             </div>
         `;
         
@@ -909,6 +1030,114 @@ function displayVersionComparison(versionInfo) {
             }
         });
     });
+    
+    // Add channel replacement handlers
+    operatorVersionsList.querySelectorAll('.channel-replacement-select').forEach(select => {
+        select.addEventListener('change', async (e) => {
+            const operator = select.dataset.operator;
+            const originalChannel = select.dataset.originalChannel;
+            const newChannel = select.value;
+            
+            if (!newChannel) return;
+            
+            // Find the original info to get current version
+            const originalInfo = currentVersionInfo.find(i => i.name === operator && i.channel === originalChannel);
+            const currentVersion = originalInfo ? originalInfo.currentVersion : '';
+            
+            // Fetch operator details to get versions for the new channel
+            try {
+                const response = await fetch(`/api/operator-details?catalog=${encodeURIComponent(parsedConfig.catalog)}&version=${encodeURIComponent(parsedConfig.version)}&operator=${encodeURIComponent(operator)}`);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to get operator details');
+                }
+                
+                const channel = data.channels.find(c => c.name === newChannel);
+                if (channel && channel.versions && channel.versions.length > 0) {
+                    const latestVersion = channel.versions[0];
+                    
+                    // Update the display to show the new channel info
+                    const itemDiv = select.closest('.version-comparison-item');
+                    const channelInfoDiv = itemDiv.querySelector('.channel-info');
+                    channelInfoDiv.textContent = `Channel: ${newChannel}`;
+                    
+                    const versionInfoDiv = itemDiv.querySelector('.version-info');
+                    versionInfoDiv.innerHTML = `
+                        <span class="current-version">Current: ${currentVersion}</span>
+                        <span class="latest-version">Latest: ${latestVersion}</span>
+                    `;
+                    
+                    // Update the action section to show update checkbox
+                    const actionDiv = itemDiv.querySelector('.version-action');
+                    actionDiv.innerHTML = `
+                        <label>
+                            <input type="checkbox" class="update-checkbox" data-name="${operator}" data-channel="${newChannel}" data-version="${latestVersion}" data-original-channel="${originalChannel}">
+                            Update to ${latestVersion}
+                        </label>
+                    `;
+                    
+                    // Remove error display
+                    const errorDiv = itemDiv.querySelector('.error-message');
+                    if (errorDiv) errorDiv.remove();
+                    const replacementDiv = itemDiv.querySelector('.channel-replacement-section');
+                    if (replacementDiv) replacementDiv.remove();
+                    
+                    // Add checkbox handler
+                    const newCheckbox = actionDiv.querySelector('.update-checkbox');
+                    newCheckbox.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            // Remove old entry if exists
+                            versionUpdates = versionUpdates.filter(u => !(u.name === operator && u.originalChannel === originalChannel));
+                            versionUpdates.push({ 
+                                name: operator, 
+                                channel: newChannel, 
+                                newVersion: latestVersion,
+                                originalChannel: originalChannel
+                            });
+                        } else {
+                            versionUpdates = versionUpdates.filter(u => !(u.name === operator && u.channel === newChannel));
+                        }
+                    });
+                    
+                    // Update class to show it's now valid
+                    const operatorInfoDiv = itemDiv.querySelector('.operator-version-info');
+                    operatorInfoDiv.classList.remove('has-error');
+                    if (latestVersion !== currentVersion) {
+                        operatorInfoDiv.classList.add('has-update');
+                    }
+                    
+                    // Track this channel replacement
+                    channelReplacements.set(operator, newChannel);
+                    
+                    // Check if all required replacements are complete
+                    checkChannelReplacementsComplete();
+                }
+            } catch (error) {
+                showError(`Failed to load channel information: ${error.message}`);
+            }
+        });
+    });
+    
+    // Add default channel addition checkbox handlers
+    operatorVersionsList.querySelectorAll('.add-default-channel-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const operator = checkbox.dataset.operator;
+            const channel = checkbox.dataset.channel;
+            const version = checkbox.dataset.version;
+            
+            if (e.target.checked) {
+                // Checkbox checked: Add default channel to channels array
+                defaultChannelAdditions.set(operator, { channel, version });
+            } else {
+                // Checkbox unchecked: Don't add to channels array, but defaultChannel parameter will be used
+                defaultChannelAdditions.delete(operator);
+            }
+        });
+    });
+    
+    // Check initial state after rendering
+    checkChannelReplacementsComplete();
 }
 
 // Select All button handler
@@ -937,10 +1166,50 @@ if (configSelectAllButton) {
 // Update configuration
 if (configUpdateButton) {
     configUpdateButton.addEventListener('click', async () => {
-        if (versionUpdates.length === 0) {
-            showError('Please select at least one operator to update');
+        // Get list of operators that are not found
+        const missingOperators = currentVersionInfo
+            .filter(info => info.operatorNotFound)
+            .map(info => info.name);
+        
+        // Show confirmation if there are missing operators
+        if (missingOperators.length > 0) {
+            const operatorList = missingOperators.join(', ');
+            const confirmMessage = `The following operator(s) were not found and will be removed from the configuration:\n\n${operatorList}\n\nDo you want to continue?`;
+            
+            if (!confirm(confirmMessage)) {
+                return; // User cancelled
+            }
+        }
+        
+        if (versionUpdates.length === 0 && missingOperators.length === 0) {
+            showError('Please select at least one operator to update or there are no changes to apply');
             return;
         }
+        
+        // Collect default channel additions (checked checkboxes)
+        const defaultChannelAdds = Array.from(defaultChannelAdditions.entries()).map(([operator, data]) => ({
+            operator,
+            channel: data.channel,
+            version: data.version
+        }));
+        
+        // Collect operators that need defaultChannel parameter (non-default channel, checkbox unchecked)
+        const operatorsNeedingDefaultChannelParam = [];
+        currentVersionInfo.forEach(info => {
+            if (info.defaultChannel && 
+                !info.operatorNotFound && 
+                !info.channelNotFound && 
+                info.channel !== info.defaultChannel) {
+                // Operator uses non-default channel
+                // Check if default channel is NOT in the additions (checkbox unchecked)
+                if (!defaultChannelAdditions.has(info.name)) {
+                    operatorsNeedingDefaultChannelParam.push({
+                        operator: info.name,
+                        defaultChannel: info.defaultChannel
+                    });
+                }
+            }
+        });
         
         try {
             const response = await fetch('/api/update-imageset-config', {
@@ -948,7 +1217,10 @@ if (configUpdateButton) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     originalConfig: originalConfigContent,
-                    updates: versionUpdates
+                    updates: versionUpdates,
+                    removeOperators: missingOperators,
+                    addDefaultChannels: defaultChannelAdds,
+                    setDefaultChannelParam: operatorsNeedingDefaultChannelParam
                 })
             });
             
@@ -964,7 +1236,12 @@ if (configUpdateButton) {
             if (configUpdateResult) {
                 configUpdateResult.style.display = 'block';
             }
-            showSuccess('ImageSetConfiguration updated successfully');
+            
+            let successMessage = 'ImageSetConfiguration updated successfully';
+            if (missingOperators.length > 0) {
+                successMessage += `. Removed ${missingOperators.length} operator(s) that were not found.`;
+            }
+            showSuccess(successMessage);
             
             // Store for download
             if (configUpdateDownloadButton) {

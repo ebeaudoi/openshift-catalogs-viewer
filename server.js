@@ -588,9 +588,16 @@ function generateImageSetConfig(catalog, version, selections) {
               ]
             };
             
-            // Include defaultChannel if provided and different from selected channel
+            // Use defaultChannel parameter only when default channel is NOT selected
             if (sel.defaultChannel && sel.defaultChannel !== sel.channel) {
+              // User selected a non-default channel
+              // Correction 1: Add defaultChannel parameter (top-level field)
               packageConfig.defaultChannel = sel.defaultChannel;
+              // Correction 2: Do NOT add default channel as a standard channel entry
+              // (default channel is not in channels array, only referenced via defaultChannel parameter)
+            } else if (sel.defaultChannel && sel.defaultChannel === sel.channel) {
+              // User selected the default channel - it's already explicitly configured in channels array
+              // Do NOT add defaultChannel parameter to avoid redundancy
             }
             
             return packageConfig;
@@ -642,7 +649,7 @@ function parseImageSetConfig(configContent) {
               version: channel.minVersion || channel.maxVersion || ''
             };
             
-            // Extract defaultChannel if present
+            // Extract defaultChannel if present (at package level in ImageSetConfiguration)
             if (pkg.defaultChannel) {
               packageInfo.defaultChannel = pkg.defaultChannel;
             }
@@ -759,10 +766,35 @@ app.post('/api/get-latest-versions', async (req, res) => {
     for (const pkg of packages) {
       try {
         const operatorDir = path.join(extractPath, pkg.name);
-        await fs.access(operatorDir);
+        
+        // Check if operator directory exists
+        try {
+          await fs.access(operatorDir);
+        } catch {
+          // Operator not found
+          versionInfo.push({
+            name: pkg.name,
+            channel: pkg.channel,
+            currentVersion: pkg.version,
+            latestVersion: pkg.version,
+            hasUpdate: false,
+            error: 'Operator not found',
+            operatorNotFound: true
+          });
+          continue;
+        }
         
         const parsedObjects = await parseFBCDirectory(operatorDir);
-        const { channels } = extractChannelsAndVersions(parsedObjects);
+        const { defaultChannel, channels } = extractChannelsAndVersions(parsedObjects);
+        
+        // Get latest version for default channel if it exists
+        let defaultChannelLatestVersion = null;
+        if (defaultChannel) {
+          const defaultChannelObj = channels.find(c => c.name === defaultChannel);
+          if (defaultChannelObj && defaultChannelObj.versions && defaultChannelObj.versions.length > 0) {
+            defaultChannelLatestVersion = defaultChannelObj.versions[0];
+          }
+        }
         
         // Find the channel
         const channel = channels.find(c => c.name === pkg.channel);
@@ -773,27 +805,52 @@ app.post('/api/get-latest-versions', async (req, res) => {
             channel: pkg.channel,
             currentVersion: pkg.version,
             latestVersion: latestVersion,
-            hasUpdate: latestVersion !== pkg.version
+            hasUpdate: latestVersion !== pkg.version,
+            defaultChannel: defaultChannel || null,
+            defaultChannelLatestVersion: defaultChannelLatestVersion,
+            availableChannels: channels.map(c => c.name)
           });
         } else {
+          // Channel not found, but operator exists
           versionInfo.push({
             name: pkg.name,
             channel: pkg.channel,
             currentVersion: pkg.version,
             latestVersion: pkg.version,
             hasUpdate: false,
-            error: 'Channel not found or no versions available'
+            error: 'Channel not found',
+            channelNotFound: true,
+            defaultChannel: defaultChannel || null,
+            defaultChannelLatestVersion: defaultChannelLatestVersion,
+            availableChannels: channels.map(c => c.name)
           });
         }
       } catch (error) {
-        versionInfo.push({
-          name: pkg.name,
-          channel: pkg.channel,
-          currentVersion: pkg.version,
-          latestVersion: pkg.version,
-          hasUpdate: false,
-          error: error.message
-        });
+        // General error - try to determine if it's operator not found
+        const operatorDir = path.join(extractPath, pkg.name);
+        try {
+          await fs.access(operatorDir);
+          // Directory exists but parsing failed
+          versionInfo.push({
+            name: pkg.name,
+            channel: pkg.channel,
+            currentVersion: pkg.version,
+            latestVersion: pkg.version,
+            hasUpdate: false,
+            error: error.message
+          });
+        } catch {
+          // Operator not found
+          versionInfo.push({
+            name: pkg.name,
+            channel: pkg.channel,
+            currentVersion: pkg.version,
+            latestVersion: pkg.version,
+            hasUpdate: false,
+            error: 'Operator not found',
+            operatorNotFound: true
+          });
+        }
       }
     }
     
@@ -813,7 +870,7 @@ app.post('/api/get-latest-versions', async (req, res) => {
 
 // API endpoint to update ImageSetConfiguration with new versions
 app.post('/api/update-imageset-config', async (req, res) => {
-  const { originalConfig, updates } = req.body;
+  const { originalConfig, updates, removeOperators, addDefaultChannels, setDefaultChannelParam } = req.body;
   
   if (!originalConfig || !updates || !Array.isArray(updates)) {
     return res.status(400).json({
@@ -834,9 +891,25 @@ app.post('/api/update-imageset-config', async (req, res) => {
     
     for (const op of operators) {
       if (op.packages && Array.isArray(op.packages)) {
+        // Remove missing operators if specified
+        if (removeOperators && Array.isArray(removeOperators) && removeOperators.length > 0) {
+          op.packages = op.packages.filter(pkg => !removeOperators.includes(pkg.name));
+        }
+        
         for (const pkg of op.packages) {
-          const update = updates.find(u => u.name === pkg.name && u.channel === pkg.channels[0]?.name);
+          // Check for channel replacement (originalChannel specified) or regular update
+          const update = updates.find(u => 
+            u.name === pkg.name && 
+            (u.originalChannel ? u.originalChannel === pkg.channels[0]?.name : u.channel === pkg.channels[0]?.name)
+          );
+          
           if (update && pkg.channels && pkg.channels.length > 0) {
+            // If originalChannel is specified, this is a channel replacement
+            if (update.originalChannel) {
+              // Update channel name
+              pkg.channels[0].name = update.channel;
+            }
+            // Update version
             pkg.channels[0].minVersion = update.newVersion;
             // Remove maxVersion if it exists
             if (pkg.channels[0].maxVersion !== undefined) {
@@ -846,6 +919,95 @@ app.post('/api/update-imageset-config', async (req, res) => {
         }
       }
     }
+    
+    // Add default channels (Fix 1: automatic for non-default, Fix 2: user-selected)
+    if (addDefaultChannels && Array.isArray(addDefaultChannels)) {
+      for (const op of operators) {
+        if (op.packages && Array.isArray(op.packages)) {
+          for (const pkg of op.packages) {
+            // Process all default channel additions for this operator
+            for (const defaultAdd of addDefaultChannels) {
+              if (defaultAdd.operator === pkg.name) {
+                // Check if this default channel is already in channels array (before any modifications)
+                const hasChannel = pkg.channels.some(ch => ch.name === defaultAdd.channel);
+                
+                if (!hasChannel) {
+                  // Default channel is not in channels array - add it
+                  pkg.channels.push({
+                    name: defaultAdd.channel,
+                    minVersion: defaultAdd.version
+                  });
+                  // Only set defaultChannel parameter if default channel is NOT in channels array
+                  // Since we just added it, we should NOT set defaultChannel parameter
+                  // The defaultChannel parameter is only for reference when default is not explicitly configured
+                } else {
+                  // Default channel is already explicitly configured in channels array
+                  // Update existing default channel version if needed
+                  const existingChannel = pkg.channels.find(ch => ch.name === defaultAdd.channel);
+                  if (existingChannel) {
+                    existingChannel.minVersion = defaultAdd.version;
+                    // Remove maxVersion if it exists
+                    if (existingChannel.maxVersion !== undefined) {
+                      delete existingChannel.maxVersion;
+                    }
+                  }
+                }
+                
+                // Always remove defaultChannel parameter if default channel is in channels array
+                // This prevents redundancy when default channel is explicitly configured
+                if (pkg.channels.some(ch => ch.name === defaultAdd.channel)) {
+                  if (pkg.defaultChannel === defaultAdd.channel) {
+                    delete pkg.defaultChannel;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Set defaultChannel parameter for operators where checkbox was unchecked
+    // (default channel is NOT in channels array, so we use defaultChannel parameter)
+    if (setDefaultChannelParam && Array.isArray(setDefaultChannelParam)) {
+      for (const op of operators) {
+        if (op.packages && Array.isArray(op.packages)) {
+          for (const pkg of op.packages) {
+            for (const defaultParam of setDefaultChannelParam) {
+              if (defaultParam.operator === pkg.name) {
+                // Check if default channel is NOT in channels array
+                const hasDefaultInChannels = pkg.channels.some(ch => ch.name === defaultParam.defaultChannel);
+                if (!hasDefaultInChannels) {
+                  // Default channel is not in channels array, so set defaultChannel parameter
+                  pkg.defaultChannel = defaultParam.defaultChannel;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Final cleanup: Remove defaultChannel parameter for any package where default channel is in channels array
+    for (const op of operators) {
+      if (op.packages && Array.isArray(op.packages)) {
+        for (const pkg of op.packages) {
+          if (pkg.defaultChannel && pkg.channels && Array.isArray(pkg.channels)) {
+            // Check if defaultChannel is already in channels array
+            const hasDefaultInChannels = pkg.channels.some(ch => ch.name === pkg.defaultChannel);
+            if (hasDefaultInChannels) {
+              // Remove defaultChannel parameter to avoid redundancy
+              delete pkg.defaultChannel;
+            }
+          }
+        }
+      }
+    }
+    
+    // Remove empty operator entries (if all packages were removed)
+    config.mirror.operators = operators.filter(op => 
+      op.packages && Array.isArray(op.packages) && op.packages.length > 0
+    );
     
     const updatedYaml = yaml.dump(config);
     

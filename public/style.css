@@ -425,6 +425,19 @@ label {
     box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
 }
 
+.download-button:hover:disabled, .update-button:hover:disabled, .add-button:hover:disabled, .generate-button:hover:disabled {
+    background: #28a745;
+    transform: none;
+    box-shadow: none;
+}
+
+.download-button:disabled, .update-button:disabled, .add-button:disabled, .generate-button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+    transform: none;
+    opacity: 0.6;
+}
+
 .download-button:active, .update-button:active, .add-button:active, .generate-button:active {
     transform: translateY(0);
 }
@@ -516,6 +529,70 @@ label {
 .no-update {
     color: #999;
     font-style: italic;
+}
+
+.version-comparison-item.has-error {
+    border-left-color: #dc3545;
+}
+
+.default-channel-display {
+    margin-top: 5px;
+    margin-bottom: 5px;
+    color: #0066cc;
+    font-size: 0.9rem;
+}
+
+.channel-replacement-section {
+    margin-top: 10px;
+    padding: 10px;
+    background: #fff3cd;
+    border-radius: 4px;
+    border: 1px solid #ffc107;
+}
+
+.channel-replacement-section label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #856404;
+}
+
+.channel-replacement-select {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #ffc107;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    background: white;
+}
+
+.default-channel-option {
+    margin-top: 10px;
+    padding: 10px;
+    background: #e7f3ff;
+    border-radius: 4px;
+    border: 1px solid #0066cc;
+}
+
+.default-channel-option label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #0066cc;
+}
+
+.default-channel-option input[type="checkbox"] {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+.default-channel-info {
+    font-size: 0.9rem;
+    color: #0066cc;
+    line-height: 1.4;
 }
 
 .config-wizard h2,
