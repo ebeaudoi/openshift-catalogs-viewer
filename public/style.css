@@ -83,6 +83,7 @@ label {
 .searchable-select-wrapper {
     position: relative;
     width: 100%;
+    z-index: 1;
 }
 
 .searchable-select-input {
@@ -134,6 +135,7 @@ label {
     z-index: 1000;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     margin-top: -2px;
+    pointer-events: auto;
 }
 
 .searchable-select-dropdown-item {
@@ -141,6 +143,11 @@ label {
     cursor: pointer;
     transition: background-color 0.2s;
     border-bottom: 1px solid #f0f0f0;
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: auto;
+    position: relative;
+    z-index: 1001;
 }
 
 .searchable-select-dropdown-item:last-child {
@@ -149,6 +156,10 @@ label {
 
 .searchable-select-dropdown-item:hover {
     background-color: #f5f5f5;
+}
+
+.searchable-select-dropdown-item:active {
+    background-color: #e0e0e0;
 }
 
 .searchable-select-dropdown-item.selected {
@@ -621,6 +632,20 @@ label {
 
 .version-comparison-item.has-error {
     border-left-color: #dc3545;
+}
+
+/* Inline error message within version comparison items */
+.version-comparison-item .error-message {
+    background-color: #fee;
+    color: #c33;
+    padding: 8px 12px;
+    border-radius: 5px;
+    border-left: 3px solid #c33;
+    margin-top: 10px;
+    margin-bottom: 0;
+    font-size: 0.9rem;
+    display: inline-block;
+    width: 100%;
 }
 
 .default-channel-display {

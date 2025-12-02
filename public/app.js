@@ -165,7 +165,12 @@ function initSearchableDropdown(inputId, selectId, dropdownId) {
     const select = document.getElementById(selectId);
     const dropdown = document.getElementById(dropdownId);
     
-    if (!input || !select || !dropdown) return;
+    if (!input || !select || !dropdown) {
+        console.warn(`Searchable dropdown initialization failed: missing elements for ${inputId}, ${selectId}, or ${dropdownId}`);
+        return false;
+    }
+    
+    console.log(`Initializing searchable dropdown: ${inputId}`);
     
     let allOptions = [];
     let filteredOptions = [];
@@ -191,6 +196,12 @@ function initSearchableDropdown(inputId, selectId, dropdownId) {
     function renderDropdown() {
         dropdown.innerHTML = '';
         
+        console.log('=== RENDERING DROPDOWN ===');
+        console.log('Filtered options:', filteredOptions.length);
+        console.log('All options:', allOptions.length);
+        console.log('Dropdown element:', dropdown);
+        console.log('Dropdown display:', window.getComputedStyle(dropdown).display);
+        
         if (filteredOptions.length === 0) {
             const emptyItem = document.createElement('div');
             emptyItem.className = 'searchable-select-dropdown-empty';
@@ -209,23 +220,111 @@ function initSearchableDropdown(inputId, selectId, dropdownId) {
             item.dataset.value = option.value;
             item.dataset.index = index;
             
-            item.addEventListener('click', () => {
-                select.value = option.value;
-                input.value = option.text;
+            // Store option values in closure
+            const optionValue = option.value;
+            const optionText = option.text;
+            
+            // Make sure item is clickable - set styles first
+            item.style.pointerEvents = 'auto';
+            item.style.cursor = 'pointer';
+            item.style.position = 'relative';
+            item.style.zIndex = '1002';
+            
+            // Create click handler function - VERY SIMPLE
+            const handleItemClick = function(e) {
+                console.log('=== CLICK EVENT FIRED ===');
+                console.log('Clicked option:', optionValue, optionText);
+                console.log('Event:', e);
+                console.log('Target:', e.target);
+                console.log('Current target:', e.currentTarget);
+                
+                e.stopPropagation();
+                e.preventDefault();
+                
+                // Set values immediately
+                console.log('Setting select value to:', optionValue);
+                if (select) {
+                    select.value = optionValue;
+                    console.log('Select value is now:', select.value);
+                }
+                if (input) {
+                    input.value = optionText;
+                    console.log('Input value is now:', input.value);
+                }
+                
+                // Hide dropdown
                 dropdown.style.display = 'none';
                 selectedIndex = -1;
+                mouseOverDropdown = false;
+                isClickingDropdown = false;
                 
-                // Trigger change event on select for compatibility
-                const changeEvent = new Event('change', { bubbles: true });
-                select.dispatchEvent(changeEvent);
-            });
+                // Trigger change event immediately
+                if (select) {
+                    console.log('Dispatching change event...');
+                    try {
+                        const changeEvent = new Event('change', { bubbles: true, cancelable: true });
+                        const result = select.dispatchEvent(changeEvent);
+                        console.log('Change event dispatched, result:', result, 'select.value:', select.value);
+                    } catch (err) {
+                        console.error('Error dispatching change event:', err);
+                    }
+                }
+                
+                return false;
+            };
+            
+            // CRITICAL: Use onclick directly - most reliable
+            item.onclick = function(e) {
+                console.log('=== ONCLICK FIRED ===');
+                console.log('Option:', optionValue, optionText);
+                handleItemClick(e);
+                return false;
+            };
+            
+            // Also add event listener as backup
+            item.addEventListener('click', function(e) {
+                console.log('=== ADD EVENT LISTENER CLICK FIRED ===');
+                handleItemClick(e);
+            }, false);
+            
+            // Also try mousedown - don't prevent default
+            item.addEventListener('mousedown', (e) => {
+                console.log('=== MOUSEDOWN on item ===', optionValue);
+                isClickingDropdown = true;
+                mouseOverDropdown = true;
+                // CRITICAL: Don't prevent default - we need the click to fire
+            }, false);
+            
+            // Also try mouseup
+            item.addEventListener('mouseup', (e) => {
+                console.log('=== MOUSEUP on item ===', optionValue);
+            }, false);
+            
+            // Test if element is in DOM and visible
+            console.log('Created item element:', item);
+            console.log('Item styles:', window.getComputedStyle(item).pointerEvents);
+            console.log('Item will be added to dropdown:', dropdown);
             
             item.addEventListener('mouseenter', () => {
                 selectedIndex = index;
-                renderDropdown();
+                // DON'T re-render on mouseenter - it removes event listeners!
+                // Just update the highlighted class
+                const items = dropdown.querySelectorAll('.searchable-select-dropdown-item');
+                items.forEach((itm, idx) => {
+                    if (idx === index) {
+                        itm.classList.add('highlighted');
+                    } else {
+                        itm.classList.remove('highlighted');
+                    }
+                });
             });
             
+            // Add a test - log when item is added
+            console.log('Adding dropdown item to DOM:', optionText, 'Element:', item);
             dropdown.appendChild(item);
+            
+            // Verify it was added
+            console.log('Item added. Dropdown now has', dropdown.children.length, 'children');
         });
     }
     
@@ -252,16 +351,103 @@ function initSearchableDropdown(inputId, selectId, dropdownId) {
     });
     
     input.addEventListener('focus', () => {
-        if (filteredOptions.length > 0) {
+        console.log('Input focused, showing dropdown. Options:', filteredOptions.length, 'All options:', allOptions.length);
+        // Always show dropdown if there are any options, even if filtered is empty (user can type to filter)
+        if (allOptions.length > 0) {
+            // Refresh options in case they changed
+            updateOptions();
             dropdown.style.display = 'block';
+            console.log('Dropdown shown');
+        } else {
+            console.log('No options available to show');
         }
     });
     
-    input.addEventListener('blur', (e) => {
-        // Delay to allow click events on dropdown items
+    input.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log('Input clicked, showing dropdown. Options:', filteredOptions.length, 'All options:', allOptions.length);
+        // Always show dropdown if there are any options
+        if (allOptions.length > 0) {
+            // Refresh options in case they changed
+            updateOptions();
+            dropdown.style.display = 'block';
+            console.log('Dropdown shown on click');
+        } else {
+            console.log('No options available to show');
+        }
+    });
+    
+    // Track if mouse is over dropdown to prevent hiding on blur
+    let mouseOverDropdown = false;
+    let isClickingDropdown = false;
+    
+    dropdown.addEventListener('mouseenter', () => {
+        mouseOverDropdown = true;
+        console.log('Mouse entered dropdown');
+    });
+    
+    dropdown.addEventListener('mouseleave', () => {
+        mouseOverDropdown = false;
+        console.log('Mouse left dropdown');
+    });
+    
+    dropdown.addEventListener('mousedown', (e) => {
+        isClickingDropdown = true;
+        mouseOverDropdown = true;
+        console.log('Mousedown on dropdown');
+    });
+    
+    dropdown.addEventListener('mouseup', (e) => {
+        console.log('Mouseup on dropdown');
+        // Keep flag true for a bit longer to ensure click completes
         setTimeout(() => {
-            dropdown.style.display = 'none';
+            isClickingDropdown = false;
         }, 200);
+    });
+    
+    // CRITICAL: Don't hide dropdown on blur if clicking dropdown
+    // Use a longer delay and check multiple times
+    let blurTimeout = null;
+    input.addEventListener('blur', (e) => {
+        console.log('=== INPUT BLUR EVENT ===');
+        console.log('mouseOverDropdown:', mouseOverDropdown);
+        console.log('isClickingDropdown:', isClickingDropdown);
+        
+        // Clear any existing timeout
+        if (blurTimeout) {
+            clearTimeout(blurTimeout);
+        }
+        
+        // Check if the related target (where focus is going) is the dropdown
+        const relatedTarget = e.relatedTarget || document.activeElement;
+        const isClickingDropdownItem = relatedTarget && (
+            relatedTarget.closest('.searchable-select-dropdown') ||
+            relatedTarget.classList.contains('searchable-select-dropdown-item')
+        );
+        
+        console.log('relatedTarget:', relatedTarget, 'isClickingDropdownItem:', isClickingDropdownItem);
+        
+        // Check multiple times to ensure click completes
+        let checkCount = 0;
+        const checkAndHide = () => {
+            checkCount++;
+            console.log(`Blur check #${checkCount} - mouseOver: ${mouseOverDropdown}, isClicking: ${isClickingDropdown}`);
+            
+            // Only hide if we're absolutely sure the user isn't clicking on the dropdown
+            if (!mouseOverDropdown && !isClickingDropdown && !isClickingDropdownItem) {
+                console.log('Hiding dropdown on blur (check #' + checkCount + ')');
+                dropdown.style.display = 'none';
+            } else if (checkCount < 5) {
+                // Check again in 100ms
+                blurTimeout = setTimeout(checkAndHide, 100);
+            } else {
+                console.log('Stopped checking - keeping dropdown visible or click should have completed');
+                isClickingDropdown = false;
+            }
+        };
+        
+        // Start checking after a delay
+        blurTimeout = setTimeout(checkAndHide, 200);
     });
     
     // Keyboard navigation
@@ -290,8 +476,18 @@ function initSearchableDropdown(inputId, selectId, dropdownId) {
                 input.value = option.text;
                 dropdown.style.display = 'none';
                 selectedIndex = -1;
-                const changeEvent = new Event('change', { bubbles: true });
-                select.dispatchEvent(changeEvent);
+                mouseOverDropdown = false;
+                
+                // Trigger change event on select for compatibility
+                // Use setTimeout to ensure it fires after dropdown is hidden
+                setTimeout(() => {
+                    const changeEvent = new Event('change', { bubbles: true, cancelable: true });
+                    select.dispatchEvent(changeEvent);
+                    
+                    // Also trigger input event to ensure all listeners are notified
+                    const inputEvent = new Event('input', { bubbles: true });
+                    input.dispatchEvent(inputEvent);
+                }, 0);
             }
         } else if (e.key === 'Escape') {
             dropdown.style.display = 'none';
@@ -305,14 +501,33 @@ function initSearchableDropdown(inputId, selectId, dropdownId) {
         if (selectedOption) {
             input.value = selectedOption.textContent;
         }
+        // For operator select, also update the view details button state
+        if (selectId === 'operator-select') {
+            // Use setTimeout to ensure the change event has propagated
+            setTimeout(() => {
+                const viewDetailsBtn = document.getElementById('view-details-button');
+                if (viewDetailsBtn && select.value) {
+                    viewDetailsBtn.disabled = false;
+                } else if (viewDetailsBtn) {
+                    viewDetailsBtn.disabled = true;
+                }
+            }, 0);
+        }
     });
     
     // Initialize
     updateOptions();
     
     // Watch for select changes (when options are added/removed)
-    const observer = new MutationObserver(updateOptions);
+    const observer = new MutationObserver((mutations) => {
+        console.log('Select options changed, updating dropdown options');
+        updateOptions();
+    });
     observer.observe(select, { childList: true, subtree: true });
+    
+    // Also expose updateOptions for manual updates if needed
+    console.log(`Searchable dropdown initialized successfully: ${inputId}`);
+    console.log('Initial options count:', allOptions.length);
     
     return { updateOptions };
 }
@@ -338,6 +553,9 @@ function populateOperatorDropdown(operators) {
     if (operatorInput) {
         operatorInput.disabled = false;
     }
+    
+    // Ensure button state is correct (should be disabled if no operator selected)
+    updateViewDetailsButtonState();
 }
 
 // Fetch operators from API or cache
@@ -500,15 +718,45 @@ toggleLogsButton.addEventListener('click', toggleLogs);
 
 // Note: Catalog and version change handlers are already defined above with cache clearing
 
-operatorSelect.addEventListener('change', () => {
-    saveStateToStorage();
-    if (operatorSelect.value) {
-        addLogEntry(`Operator selected: ${operatorSelect.value}`, 'info');
+// Function to update view details button state
+function updateViewDetailsButtonState() {
+    if (operatorSelect && operatorSelect.value) {
         viewDetailsButton.disabled = false;
     } else {
         viewDetailsButton.disabled = true;
     }
+}
+
+operatorSelect.addEventListener('change', () => {
+    saveStateToStorage();
+    if (operatorSelect.value) {
+        addLogEntry(`Operator selected: ${operatorSelect.value}`, 'info');
+        updateViewDetailsButtonState();
+    } else {
+        updateViewDetailsButtonState();
+    }
 });
+
+// Also listen to the searchable input for operator selection
+const operatorInput = document.getElementById('operator-select-input');
+if (operatorInput) {
+    // Listen for when input value changes (user types or selects)
+    operatorInput.addEventListener('input', () => {
+        // Check if the select has a value (user selected from dropdown)
+        if (operatorSelect && operatorSelect.value) {
+            updateViewDetailsButtonState();
+        }
+    });
+    
+    // Also check on blur in case the value was set programmatically
+    operatorInput.addEventListener('blur', () => {
+        setTimeout(() => {
+            if (operatorSelect && operatorSelect.value) {
+                updateViewDetailsButtonState();
+            }
+        }, 100);
+    });
+}
 
 // View details button handler
 viewDetailsButton.addEventListener('click', () => {
@@ -1467,17 +1715,24 @@ if (configUpdateDownloadButton) {
 }
 
 // Initialize searchable dropdowns when DOM is ready
+function initializeSearchableDropdowns() {
+    // Initialize searchable dropdown for "Fetch Operators" tab
+    const result1 = initSearchableDropdown('operator-select-input', 'operator-select', 'operator-select-dropdown');
+    if (!result1) {
+        console.warn('Failed to initialize operator select dropdown');
+    }
+    
+    // Initialize searchable dropdown for "Create ImageSetConfiguration" tab
+    const result2 = initSearchableDropdown('config-operator-select-input', 'config-operator-select', 'config-operator-select-dropdown');
+    if (!result2) {
+        console.warn('Failed to initialize config operator select dropdown');
+    }
+}
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        // Initialize searchable dropdown for "Fetch Operators" tab
-        initSearchableDropdown('operator-select-input', 'operator-select', 'operator-select-dropdown');
-        
-        // Initialize searchable dropdown for "Create ImageSetConfiguration" tab
-        initSearchableDropdown('config-operator-select-input', 'config-operator-select', 'config-operator-select-dropdown');
-    });
+    document.addEventListener('DOMContentLoaded', initializeSearchableDropdowns);
 } else {
     // DOM is already loaded
-    initSearchableDropdown('operator-select-input', 'operator-select', 'operator-select-dropdown');
-    initSearchableDropdown('config-operator-select-input', 'config-operator-select', 'config-operator-select-dropdown');
+    initializeSearchableDropdowns();
 }
 
