@@ -374,8 +374,25 @@ async function parseFBCDirectory(operatorDir) {
             }
           }
         } else {
-          // YAML file
-          parsed = yaml.load(content);
+          // YAML file - may contain multiple documents separated by ---
+          try {
+            // Try loading all documents first (multi-document YAML)
+            const allDocs = yaml.loadAll(content);
+            if (allDocs && allDocs.length > 0) {
+              // If multiple documents, use all of them
+              parsed = allDocs;
+            } else {
+              // Fallback to single document
+              parsed = yaml.load(content);
+            }
+          } catch (yamlError) {
+            // If loadAll fails, try single document load
+            try {
+              parsed = yaml.load(content);
+            } catch (singleDocError) {
+              throw new Error(`Failed to parse YAML: ${yamlError.message}`);
+            }
+          }
         }
         
         // Handle both single objects and arrays
