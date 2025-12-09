@@ -104,6 +104,21 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="config-target-catalog-input">Target Catalog Name (Optional)</label>
+                    <input type="text" id="config-target-catalog-input" class="text-input" placeholder="e.g., my-custom-catalog">
+                    <small class="form-hint">The name for the mirrored catalog used during the mirroring process</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="config-archive-size-input">Archive Size (Optional)</label>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="number" id="config-archive-size-input" class="text-input" placeholder="e.g., 100" min="1" step="1" style="flex: 1;">
+                        <span style="font-weight: 600; color: #666;">GiB</span>
+                    </div>
+                    <small class="form-hint">Maximum size for each archive file (in GiB)</small>
+                </div>
+
+                <div class="form-group">
                     <button id="config-fetch-operators-button" class="fetch-button" disabled>
                         Fetch Operators
                     </button>

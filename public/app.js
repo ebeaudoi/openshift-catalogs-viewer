@@ -1187,6 +1187,19 @@ if (configGenerateButton) {
             return;
         }
         
+        // Get optional parameters
+        const targetCatalogInput = document.getElementById('config-target-catalog-input');
+        const archiveSizeInput = document.getElementById('config-archive-size-input');
+        
+        const targetCatalog = targetCatalogInput ? targetCatalogInput.value.trim() : '';
+        const archiveSize = archiveSizeInput ? archiveSizeInput.value.trim() : '';
+        
+        // Validate archive size if provided
+        if (archiveSize && (isNaN(archiveSize) || parseFloat(archiveSize) <= 0)) {
+            showError('Archive size must be a positive number');
+            return;
+        }
+        
         try {
             const response = await fetch('/api/generate-imageset-config', {
                 method: 'POST',
@@ -1194,7 +1207,9 @@ if (configGenerateButton) {
                 body: JSON.stringify({
                     catalog: currentConfigCatalog,
                     version: currentConfigVersion,
-                    selections: selectedOperators
+                    selections: selectedOperators,
+                    targetCatalog: targetCatalog || undefined,
+                    archiveSize: archiveSize ? parseFloat(archiveSize) : undefined
                 })
             });
             
@@ -1255,6 +1270,7 @@ let originalConfigContent = null;
 let versionUpdates = [];
 let channelReplacements = new Map(); // Track channel replacements: operator -> newChannel
 let defaultChannelAdditions = new Map(); // Track default channel additions: operator -> {channel, version}
+let defaultChannelReplacements = new Map(); // Track default channel replacements: operator -> {channel, version} (replaces all channels)
 
 // Handle file upload
 if (configFileInput) {
@@ -1356,6 +1372,7 @@ function displayVersionComparison(versionInfo) {
     versionUpdates = [];
     channelReplacements.clear(); // Reset channel replacements
     defaultChannelAdditions.clear(); // Reset default channel additions
+    defaultChannelReplacements.clear(); // Reset default channel replacements
     currentVersionInfo = versionInfo; // Store for channel replacement handler
     
     versionInfo.forEach(info => {
@@ -1395,17 +1412,17 @@ function displayVersionComparison(versionInfo) {
             errorDisplay = `<div class="error-message">${info.error}</div>`;
         }
         
-        // Build default channel addition option (Fix 2)
+        // Build default channel options (Add or Replace)
         let defaultChannelOption = '';
         if (info.defaultChannel && !info.operatorNotFound && !info.channelNotFound) {
             // Use defaultChannelLatestVersion from server response
             const defaultLatestVersion = info.defaultChannelLatestVersion || info.latestVersion;
             
             if (isNonDefaultChannel) {
-                // Fix 2: Optional checkbox to add/update default channel (only shown when current channel ≠ default channel)
-                // Default to checked (Fix 1: automatically add default channel)
+                // New default channel detected (different from currently configured channel)
+                // Show both "Add" and "Replace" options
                 if (defaultLatestVersion) {
-                    // Automatically add default channel when non-default is used (Fix 1 - checked by default)
+                    // Default to "Add" option (checked) - automatically add default channel alongside existing
                     defaultChannelAdditions.set(info.name, {
                         channel: info.defaultChannel,
                         version: defaultLatestVersion
@@ -1413,22 +1430,41 @@ function displayVersionComparison(versionInfo) {
                     
                     defaultChannelOption = `
                         <div class="default-channel-option">
-                            <label>
-                                <input type="checkbox" class="add-default-channel-checkbox" 
-                                       data-operator="${info.name}" 
-                                       data-channel="${info.defaultChannel}" 
-                                       data-version="${defaultLatestVersion}"
-                                       checked>
-                                Add default channel "${info.defaultChannel}" to channels array with latest version (${defaultLatestVersion})
-                            </label>
-                            <div class="default-channel-info" style="margin-top: 5px; font-size: 0.85rem; color: #666;">
-                                If unchecked, defaultChannel parameter will be used instead
+                            <div class="default-channel-header" style="margin-bottom: 10px; font-weight: 600; color: #333;">
+                                New default channel detected: <strong>${info.defaultChannel}</strong>
+                            </div>
+                            <div class="default-channel-choices" style="margin-left: 20px;">
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="radio" name="default-channel-action-${info.name}" 
+                                           class="default-channel-action-radio" 
+                                           data-operator="${info.name}" 
+                                           data-action="add"
+                                           data-channel="${info.defaultChannel}" 
+                                           data-version="${defaultLatestVersion}"
+                                           checked>
+                                    <strong>Add:</strong> Add the new default channel "${info.defaultChannel}" (version ${defaultLatestVersion}) alongside the existing channel "${info.channel}"
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="radio" name="default-channel-action-${info.name}" 
+                                           class="default-channel-action-radio" 
+                                           data-operator="${info.name}" 
+                                           data-action="replace"
+                                           data-channel="${info.defaultChannel}" 
+                                           data-version="${defaultLatestVersion}">
+                                    <strong>Replace:</strong> Replace the current channel configuration with the new default channel "${info.defaultChannel}" (version ${defaultLatestVersion})
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="radio" name="default-channel-action-${info.name}" 
+                                           class="default-channel-action-radio" 
+                                           data-operator="${info.name}" 
+                                           data-action="none">
+                                    <strong>None:</strong> Keep current channel only (use defaultChannel parameter for reference)
+                                </label>
                             </div>
                         </div>
                     `;
                 }
             }
-            // Fix 2 constraint: Option is only shown when current channel ≠ default channel (handled in isNonDefaultChannel case above)
             // If current channel IS the default channel, no option is shown (already using default)
         }
         
@@ -1563,19 +1599,28 @@ function displayVersionComparison(versionInfo) {
         });
     });
     
-    // Add default channel addition checkbox handlers
-    operatorVersionsList.querySelectorAll('.add-default-channel-checkbox').forEach(checkbox => {
-        checkbox.addEventListener('change', (e) => {
-            const operator = checkbox.dataset.operator;
-            const channel = checkbox.dataset.channel;
-            const version = checkbox.dataset.version;
+    // Add radio button handlers for default channel actions (Add/Replace/None)
+    operatorVersionsList.querySelectorAll('.default-channel-action-radio').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            if (!e.target.checked) return; // Only process when this radio is selected
             
-            if (e.target.checked) {
-                // Checkbox checked: Add default channel to channels array
+            const operator = radio.dataset.operator;
+            const action = radio.dataset.action;
+            const channel = radio.dataset.channel;
+            const version = radio.dataset.version;
+            
+            if (action === 'add') {
+                // Add: Add default channel alongside existing channel
                 defaultChannelAdditions.set(operator, { channel, version });
-            } else {
-                // Checkbox unchecked: Don't add to channels array, but defaultChannel parameter will be used
+                defaultChannelReplacements.delete(operator);
+            } else if (action === 'replace') {
+                // Replace: Replace all channels with default channel only
+                defaultChannelReplacements.set(operator, { channel, version });
                 defaultChannelAdditions.delete(operator);
+            } else if (action === 'none') {
+                // None: Keep current channel only, use defaultChannel parameter
+                defaultChannelAdditions.delete(operator);
+                defaultChannelReplacements.delete(operator);
             }
         });
     });
@@ -1630,14 +1675,21 @@ if (configUpdateButton) {
             return;
         }
         
-        // Collect default channel additions (checked checkboxes)
+        // Collect default channel additions (Add option selected)
         const defaultChannelAdds = Array.from(defaultChannelAdditions.entries()).map(([operator, data]) => ({
             operator,
             channel: data.channel,
             version: data.version
         }));
         
-        // Collect operators that need defaultChannel parameter (non-default channel, checkbox unchecked)
+        // Collect default channel replacements (Replace option selected)
+        const defaultChannelReplaces = Array.from(defaultChannelReplacements.entries()).map(([operator, data]) => ({
+            operator,
+            channel: data.channel,
+            version: data.version
+        }));
+        
+        // Collect operators that need defaultChannel parameter (non-default channel, action is "none")
         const operatorsNeedingDefaultChannelParam = [];
         currentVersionInfo.forEach(info => {
             if (info.defaultChannel && 
@@ -1645,8 +1697,8 @@ if (configUpdateButton) {
                 !info.channelNotFound && 
                 info.channel !== info.defaultChannel) {
                 // Operator uses non-default channel
-                // Check if default channel is NOT in the additions (checkbox unchecked)
-                if (!defaultChannelAdditions.has(info.name)) {
+                // Check if default channel is NOT in additions or replacements (action is "none")
+                if (!defaultChannelAdditions.has(info.name) && !defaultChannelReplacements.has(info.name)) {
                     operatorsNeedingDefaultChannelParam.push({
                         operator: info.name,
                         defaultChannel: info.defaultChannel
@@ -1664,6 +1716,7 @@ if (configUpdateButton) {
                     updates: versionUpdates,
                     removeOperators: missingOperators,
                     addDefaultChannels: defaultChannelAdds,
+                    replaceWithDefaultChannels: defaultChannelReplaces,
                     setDefaultChannelParam: operatorsNeedingDefaultChannelParam
                 })
             });

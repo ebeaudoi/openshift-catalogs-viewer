@@ -584,44 +584,56 @@ app.get('/api/operator-details', async (req, res) => {
 });
 
 // Helper function to generate ImageSetConfiguration YAML
-function generateImageSetConfig(catalog, version, selections) {
+function generateImageSetConfig(catalog, version, selections, targetCatalog, archiveSize) {
   const imageName = `registry.redhat.io/redhat/${catalog}:${version}`;
+  
+  const operatorConfig = {
+    catalog: imageName,
+    packages: selections.map(sel => {
+      const packageConfig = {
+        name: sel.operator,
+        channels: [
+          {
+            name: sel.channel,
+            minVersion: sel.version
+          }
+        ]
+      };
+      
+      // Use defaultChannel parameter only when default channel is NOT selected
+      if (sel.defaultChannel && sel.defaultChannel !== sel.channel) {
+        // User selected a non-default channel
+        // Correction 1: Add defaultChannel parameter (top-level field)
+        packageConfig.defaultChannel = sel.defaultChannel;
+        // Correction 2: Do NOT add default channel as a standard channel entry
+        // (default channel is not in channels array, only referenced via defaultChannel parameter)
+      } else if (sel.defaultChannel && sel.defaultChannel === sel.channel) {
+        // User selected the default channel - it's already explicitly configured in channels array
+        // Do NOT add defaultChannel parameter to avoid redundancy
+      }
+      
+      return packageConfig;
+    })
+  };
+  
+  // Add targetCatalog if provided
+  if (targetCatalog && targetCatalog.trim()) {
+    operatorConfig.targetCatalog = targetCatalog.trim();
+  }
+  
+  const mirrorConfig = {
+    operators: [operatorConfig]
+  };
+  
+  // Add archiveSize if provided
+  if (archiveSize !== undefined && archiveSize !== null && archiveSize > 0) {
+    mirrorConfig.archiveSize = archiveSize;
+  }
   
   const config = {
     apiVersion: 'mirror.openshift.io/v2alpha1',
     kind: 'ImageSetConfiguration',
-    mirror: {
-      operators: [
-        {
-          catalog: imageName,
-          packages: selections.map(sel => {
-            const packageConfig = {
-              name: sel.operator,
-              channels: [
-                {
-                  name: sel.channel,
-                  minVersion: sel.version
-                }
-              ]
-            };
-            
-            // Use defaultChannel parameter only when default channel is NOT selected
-            if (sel.defaultChannel && sel.defaultChannel !== sel.channel) {
-              // User selected a non-default channel
-              // Correction 1: Add defaultChannel parameter (top-level field)
-              packageConfig.defaultChannel = sel.defaultChannel;
-              // Correction 2: Do NOT add default channel as a standard channel entry
-              // (default channel is not in channels array, only referenced via defaultChannel parameter)
-            } else if (sel.defaultChannel && sel.defaultChannel === sel.channel) {
-              // User selected the default channel - it's already explicitly configured in channels array
-              // Do NOT add defaultChannel parameter to avoid redundancy
-            }
-            
-            return packageConfig;
-          })
-        }
-      ]
-    }
+    mirror: mirrorConfig
   };
   
   return yaml.dump(config);
@@ -690,7 +702,7 @@ function parseImageSetConfig(configContent) {
 
 // API endpoint to generate ImageSetConfiguration
 app.post('/api/generate-imageset-config', async (req, res) => {
-  const { catalog, version, selections } = req.body;
+  const { catalog, version, selections, targetCatalog, archiveSize } = req.body;
   
   if (!catalog || !version || !selections || !Array.isArray(selections)) {
     return res.status(400).json({
@@ -698,8 +710,17 @@ app.post('/api/generate-imageset-config', async (req, res) => {
     });
   }
   
+  // Validate archiveSize if provided
+  if (archiveSize !== undefined && archiveSize !== null) {
+    if (isNaN(archiveSize) || archiveSize <= 0) {
+      return res.status(400).json({
+        error: 'archiveSize must be a positive number'
+      });
+    }
+  }
+  
   try {
-    const yamlContent = generateImageSetConfig(catalog, version, selections);
+    const yamlContent = generateImageSetConfig(catalog, version, selections, targetCatalog, archiveSize);
     
     res.json({
       success: true,
@@ -887,7 +908,7 @@ app.post('/api/get-latest-versions', async (req, res) => {
 
 // API endpoint to update ImageSetConfiguration with new versions
 app.post('/api/update-imageset-config', async (req, res) => {
-  const { originalConfig, updates, removeOperators, addDefaultChannels, setDefaultChannelParam } = req.body;
+  const { originalConfig, updates, removeOperators, addDefaultChannels, replaceWithDefaultChannels, setDefaultChannelParam } = req.body;
   
   if (!originalConfig || !updates || !Array.isArray(updates)) {
     return res.status(400).json({
@@ -937,11 +958,44 @@ app.post('/api/update-imageset-config', async (req, res) => {
       }
     }
     
+    // Replace channels with default channel (user selected "Replace" option)
+    if (replaceWithDefaultChannels && Array.isArray(replaceWithDefaultChannels)) {
+      for (const op of operators) {
+        if (op.packages && Array.isArray(op.packages)) {
+          for (const pkg of op.packages) {
+            // Process all default channel replacements for this operator
+            for (const defaultReplace of replaceWithDefaultChannels) {
+              if (defaultReplace.operator === pkg.name) {
+                // Replace all channels with the default channel only
+                pkg.channels = [{
+                  name: defaultReplace.channel,
+                  minVersion: defaultReplace.version
+                }];
+                // Remove defaultChannel parameter since default channel is now explicitly configured
+                if (pkg.defaultChannel) {
+                  delete pkg.defaultChannel;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
     // Add default channels (Fix 1: automatic for non-default, Fix 2: user-selected)
     if (addDefaultChannels && Array.isArray(addDefaultChannels)) {
       for (const op of operators) {
         if (op.packages && Array.isArray(op.packages)) {
           for (const pkg of op.packages) {
+            // Skip if this operator is being replaced (already handled above)
+            const isBeingReplaced = replaceWithDefaultChannels && 
+              Array.isArray(replaceWithDefaultChannels) &&
+              replaceWithDefaultChannels.some(r => r.operator === pkg.name);
+            
+            if (isBeingReplaced) {
+              continue; // Skip additions if replacement is happening
+            }
+            
             // Process all default channel additions for this operator
             for (const defaultAdd of addDefaultChannels) {
               if (defaultAdd.operator === pkg.name) {
